@@ -1,0 +1,18 @@
+{
+  "files.watcherExclude": {
+    "**/flutter/**": true,
+    "**/hamstock_server/dist/**": true,
+    "**/hamstock_server/node_modules/**": true,
+    "**/hamstock_app/build/**": true
+  },
+  "search.exclude": {
+    "**/flutter/**": true,
+    "**/hamstock_server/dist/**": true,
+    "**/hamstock_server/node_modules/**": true,
+    "**/hamstock_app/build/**": true
+  },
+  "typescript.tsserver.watchOptions": {
+    "watchFile": "useFsEvents",
+    "watchDirectory": "useFsEvents"
+  }
+}

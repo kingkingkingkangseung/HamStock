@@ -35,6 +35,8 @@ model Stock {
   market     String
   price      Float
   changeRate Float
+  marketCap  Float    @default(0)
+  volume     Float    @default(0)
   updatedAt  DateTime @updatedAt
 
   portfolios Portfolio[]
@@ -67,4 +69,16 @@ model Order {
 
   user  User  @relation(fields: [userId], references: [id])
   stock Stock @relation(fields: [stockId], references: [id])
+}
+
+model WatchUniverse {
+  id       Int     @id @default(autoincrement())
+  name     String
+  code     String
+  market   String
+  enabled  Boolean @default(true)
+  priority Int     @default(100)
+
+  @@unique([market, code])
+  @@index([enabled, priority])
 }

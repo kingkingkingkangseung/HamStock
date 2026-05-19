@@ -21,12 +21,30 @@ export class OrderController {
   }
 
   @Post('buy')
-  buy(@Body() body: { userId: number; stockId: number; quantity: number }) {
+  buy(
+    @Body()
+    body: {
+      userId: number;
+      stockId: number;
+      quantity: number;
+      priceType?: 'MARKET' | 'LIMIT';
+      limitPrice?: number;
+    },
+  ) {
     return this.orderService.buy(body);
   }
 
   @Post('sell')
-  sell(@Body() body: { userId: number; stockId: number; quantity: number }) {
+  sell(
+    @Body()
+    body: {
+      userId: number;
+      stockId: number;
+      quantity: number;
+      priceType?: 'MARKET' | 'LIMIT';
+      limitPrice?: number;
+    },
+  ) {
     return this.orderService.sell(body);
   }
 

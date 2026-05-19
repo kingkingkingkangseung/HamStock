@@ -4,6 +4,7 @@ import { StockService } from './service';
 type StockSortField = 'marketCap' | 'volume' | 'changeRate';
 type SortOrder = 'asc' | 'desc';
 type CoreMarket = 'KOSPI' | 'US';
+type ChartRange = '1D' | '1W' | '3M' | '1Y';
 
 @Controller('stocks')
 export class StockController {
@@ -52,6 +53,47 @@ export class StockController {
       q,
       market: market as CoreMarket | undefined,
       limit: parsedLimit,
+    });
+  }
+
+  @Get('chart')
+  getChart(
+    @Query('code') code?: string,
+    @Query('market') market?: string,
+    @Query('range') range?: string,
+  ) {
+    if (!code || code.trim() == '') {
+      throw new BadRequestException('code is required');
+    }
+
+    if (!market || !['KOSPI', 'US'].includes(market)) {
+      throw new BadRequestException('market must be one of: KOSPI, US');
+    }
+
+    if (!range || !['1D', '1W', '3M', '1Y'].includes(range)) {
+      throw new BadRequestException('range must be one of: 1D, 1W, 3M, 1Y');
+    }
+
+    return this.stockService.getChart({
+      code,
+      market,
+      range: range as ChartRange,
+    });
+  }
+
+  @Get('detail')
+  getStockDetail(@Query('code') code?: string, @Query('market') market?: string) {
+    if (!code || code.trim() === '') {
+      throw new BadRequestException('code is required');
+    }
+
+    if (!market || !['KOSPI', 'US'].includes(market)) {
+      throw new BadRequestException('market must be one of: KOSPI, US');
+    }
+
+    return this.stockService.getStockDetail({
+      code,
+      market: market as CoreMarket,
     });
   }
 

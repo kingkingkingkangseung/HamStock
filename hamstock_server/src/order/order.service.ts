@@ -8,6 +8,8 @@ type OrderRequest = {
   userId: number;
   stockId: number;
   quantity: number;
+  priceType?: 'MARKET' | 'LIMIT';
+  limitPrice?: number;
 };
 
 type OrderSide = 'BUY' | 'SELL';
@@ -31,23 +33,8 @@ export class OrderService {
 
   async preview(request: PreviewRequest) {
     const { userId, stockId, quantity } = this.validateOrderRequest(request);
-    const side = request.side;
-    const priceType = request.priceType ?? 'MARKET';
-    const limitPrice = request.limitPrice;
-
-    if (!['BUY', 'SELL'].includes(side)) {
-      throw new BadRequestException('side must be BUY or SELL');
-    }
-
-    if (!['MARKET', 'LIMIT'].includes(priceType)) {
-      throw new BadRequestException('priceType must be MARKET or LIMIT');
-    }
-
-    if (priceType === 'LIMIT') {
-      if (typeof limitPrice !== 'number' || !Number.isFinite(limitPrice) || limitPrice <= 0) {
-        throw new BadRequestException('limitPrice must be a positive number for LIMIT orders');
-      }
-    }
+    const side = this.validateSide(request.side);
+    const { priceType, limitPrice } = this.validatePriceOption(request);
 
     const stock = await this.prisma.stock.findUnique({ where: { id: stockId } });
     if (!stock) {
@@ -123,6 +110,7 @@ export class OrderService {
 
   async buy(request: OrderRequest) {
     const { userId, stockId, quantity } = this.validateOrderRequest(request);
+    const { priceType, limitPrice } = this.validatePriceOption(request);
 
     return this.prisma.$transaction(async (tx) => {
       const stock = await tx.stock.findUnique({ where: { id: stockId } });
@@ -131,7 +119,10 @@ export class OrderService {
       }
 
       const asset = await this.ensureAsset(tx, userId);
-      const totalPrice = stock.price * quantity;
+      const executionPrice = priceType === 'LIMIT' ? (limitPrice as number) : stock.price;
+      const grossAmount = executionPrice * quantity;
+      const fee = grossAmount * BUY_FEE_RATE;
+      const totalPrice = grossAmount + fee;
 
       if (asset.balance < totalPrice) {
         throw new BadRequestException('insufficient balance');
@@ -144,7 +135,7 @@ export class OrderService {
       if (existing) {
         const newQuantity = existing.quantity + quantity;
         const newAvgPrice =
-          (existing.avgPrice * existing.quantity + stock.price * quantity) /
+          (existing.avgPrice * existing.quantity + executionPrice * quantity) /
           newQuantity;
 
         await tx.portfolio.update({
@@ -160,7 +151,7 @@ export class OrderService {
             userId,
             stockId,
             quantity,
-            avgPrice: stock.price,
+            avgPrice: executionPrice,
           },
         });
       }
@@ -170,7 +161,7 @@ export class OrderService {
           userId,
           stockId,
           type: 'BUY',
-          price: stock.price,
+          price: executionPrice,
           quantity,
           totalPrice,
           status: 'FILLED',
@@ -198,6 +189,7 @@ export class OrderService {
 
   async sell(request: OrderRequest) {
     const { userId, stockId, quantity } = this.validateOrderRequest(request);
+    const { priceType, limitPrice } = this.validatePriceOption(request);
 
     return this.prisma.$transaction(async (tx) => {
       const stock = await tx.stock.findUnique({ where: { id: stockId } });
@@ -214,7 +206,10 @@ export class OrderService {
         throw new BadRequestException('insufficient holdings');
       }
 
-      const totalPrice = stock.price * quantity;
+      const executionPrice = priceType === 'LIMIT' ? (limitPrice as number) : stock.price;
+      const grossAmount = executionPrice * quantity;
+      const fee = grossAmount * SELL_FEE_RATE;
+      const totalPrice = grossAmount - fee;
       const remain = holding.quantity - quantity;
 
       if (remain === 0) {
@@ -231,7 +226,7 @@ export class OrderService {
           userId,
           stockId,
           type: 'SELL',
-          price: stock.price,
+          price: executionPrice,
           quantity,
           totalPrice,
           status: 'FILLED',
@@ -316,6 +311,39 @@ export class OrderService {
     }
 
     return { userId, stockId, quantity };
+  }
+
+  private validateSide(side: unknown): OrderSide {
+    if (side !== 'BUY' && side !== 'SELL') {
+      throw new BadRequestException('side must be BUY or SELL');
+    }
+
+    return side;
+  }
+
+  private validatePriceOption(request: {
+    priceType?: 'MARKET' | 'LIMIT';
+    limitPrice?: number;
+  }) {
+    const priceType = request.priceType ?? 'MARKET';
+    const limitPrice = request.limitPrice;
+
+    if (priceType !== 'MARKET' && priceType !== 'LIMIT') {
+      throw new BadRequestException('priceType must be MARKET or LIMIT');
+    }
+
+    if (
+      priceType === 'LIMIT' &&
+      (typeof limitPrice !== 'number' ||
+        !Number.isFinite(limitPrice) ||
+        limitPrice <= 0)
+    ) {
+      throw new BadRequestException(
+        'limitPrice must be a positive number for LIMIT orders',
+      );
+    }
+
+    return { priceType, limitPrice };
   }
 
   private async ensureAsset(

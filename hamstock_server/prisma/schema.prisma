@@ -7,14 +7,16 @@ datasource db {
 }
 
 model User {
-  id        Int      @id @default(autoincrement())
-  email     String   @unique
-  nickname  String
-  createdAt DateTime @default(now())
+  id           Int      @id @default(autoincrement())
+  email        String   @unique
+  nickname     String
+  passwordHash String?
+  createdAt    DateTime @default(now())
 
-  asset      Asset?
-  portfolios Portfolio[]
-  orders     Order[]
+  asset        Asset?
+  portfolios   Portfolio[]
+  orders       Order[]
+  quizAttempts QuizAttempt[]
 }
 
 model Asset {
@@ -25,7 +27,7 @@ model Asset {
   seed       Int
   updatedAt  DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id])
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model Stock {
@@ -52,8 +54,8 @@ model Portfolio {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user  User  @relation(fields: [userId], references: [id])
-  stock Stock @relation(fields: [stockId], references: [id])
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  stock Stock @relation(fields: [stockId], references: [id], onDelete: Cascade)
 }
 
 model Order {
@@ -67,8 +69,8 @@ model Order {
   status     String
   createdAt  DateTime @default(now())
 
-  user  User  @relation(fields: [userId], references: [id])
-  stock Stock @relation(fields: [stockId], references: [id])
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  stock Stock @relation(fields: [stockId], references: [id], onDelete: Cascade)
 }
 
 model WatchUniverse {
@@ -81,4 +83,19 @@ model WatchUniverse {
 
   @@unique([market, code])
   @@index([enabled, priority])
+}
+
+model QuizAttempt {
+  id              Int      @id @default(autoincrement())
+  userId          Int
+  questionId      Int
+  answeredCorrect Boolean
+  seedAwarded     Int      @default(0)
+  createdAt       DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([createdAt])
+  @@index([userId, createdAt])
 }

@@ -1,4 +1,9 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
 
@@ -75,6 +80,109 @@ export class MeService {
     });
   }
 
+  async getRanking(userId?: number, limit = 10) {
+    const safeLimit = Math.min(Math.max(Math.floor(limit), 3), 50);
+    const users = await this.prisma.user.findMany({
+      include: {
+        asset: true,
+        portfolios: {
+          where: { quantity: { gt: 0 } },
+          include: { stock: true },
+        },
+      },
+    });
+
+    const ranked = users
+      .map((user) => {
+        const cashBalance = user.asset?.balance ?? INITIAL_BALANCE;
+        const holdingsValue = user.portfolios.reduce((sum, item) => {
+          return sum + item.quantity * item.stock.price;
+        }, 0);
+        const totalAsset = cashBalance + holdingsValue;
+        const profitLoss = totalAsset - INITIAL_BALANCE;
+        const returnRate = (profitLoss / INITIAL_BALANCE) * 100;
+
+        return {
+          userId: user.id,
+          nickname: user.nickname,
+          totalAsset,
+          cashBalance,
+          holdingsValue,
+          holdingsCount: user.portfolios.length,
+          profitLoss,
+          returnRate,
+          hamsterStage: this.getHamsterStage(totalAsset),
+        };
+      })
+      .sort((a, b) => {
+        if (b.returnRate !== a.returnRate) return b.returnRate - a.returnRate;
+        return a.userId - b.userId;
+      })
+      .map((entry, index) => ({
+        ...entry,
+        rank: index + 1,
+        isMe: userId ? entry.userId === userId : false,
+      }));
+
+    return {
+      updatedAt: new Date(),
+      top3: ranked.slice(0, 3),
+      ranking: ranked.slice(0, safeLimit),
+      myRanking: userId
+        ? ranked.find((entry) => entry.userId === userId) ?? null
+        : null,
+    };
+  }
+
+  async updateNickname(body: unknown) {
+    const payload = this.parseNicknameBody(body);
+    const userId = Number(payload.userId);
+    const nickname = this.validateNickname(payload.nickname);
+
+    if (!Number.isInteger(userId) || userId <= 0) {
+      throw new BadRequestException('userId must be a positive number');
+    }
+
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException('user not found');
+    }
+
+    const duplicated = await this.prisma.user.findFirst({
+      where: {
+        nickname,
+        NOT: { id: userId },
+      },
+    });
+    if (duplicated) {
+      throw new ConflictException('already registered nickname');
+    }
+
+    try {
+      const updated = await this.prisma.user.update({
+        where: { id: userId },
+        data: { nickname },
+      });
+
+      return {
+        user: {
+          id: updated.id,
+          email: updated.email,
+          nickname: updated.nickname,
+          createdAt: updated.createdAt,
+        },
+      };
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException('already registered nickname');
+      }
+      throw error;
+    }
+  }
+
   private calculateVolatility(
     holdings: Array<{ quantity: number; stock: { price: number; changeRate: number } }>,
   ) {
@@ -126,6 +234,38 @@ export class MeService {
     }
 
     return '포트폴리오가 안정적으로 유지 중이야.';
+  }
+
+  private getHamsterStage(totalAsset: number) {
+    if (totalAsset < 6_000_000) return '위기';
+    if (totalAsset < 9_000_000) return '노력';
+    if (totalAsset < 12_000_000) return '보통';
+    if (totalAsset < 16_000_000) return '여유';
+    return '재벌';
+  }
+
+  private parseNicknameBody(body: unknown): { userId?: unknown; nickname?: unknown } {
+    if (typeof body === 'object' && body !== null) {
+      return body as { userId?: unknown; nickname?: unknown };
+    }
+    return {};
+  }
+
+  private validateNickname(nickname: unknown) {
+    if (typeof nickname !== 'string') {
+      throw new BadRequestException('nickname is required');
+    }
+
+    const normalized = nickname.trim();
+    if (normalized.length < 2 || normalized.length > 12) {
+      throw new BadRequestException('nickname must be 2-12 characters');
+    }
+
+    if (/[{}"'\\]/.test(normalized)) {
+      throw new BadRequestException('nickname contains invalid characters');
+    }
+
+    return normalized;
   }
 
   private async ensureAsset(tx: Prisma.TransactionClient, userId: number) {

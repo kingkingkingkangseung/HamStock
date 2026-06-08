@@ -1,4 +1,10 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { Prisma } from '@prisma/client';
+import { PrismaService } from '../prisma.service';
 
 const DAILY_SEED_LIMIT = 5;
 const INITIAL_BALANCE = 10000000;
@@ -70,26 +76,27 @@ const QUESTIONS: QuizQuestion[] = [
 
 @Injectable()
 export class QuizService {
-  private demoSeed = 0;
-  private demoTodayAwarded = 0;
-  private demoCashBalance = INITIAL_BALANCE;
-  private demoTotalValue = INITIAL_BALANCE;
+  constructor(private readonly prisma: PrismaService) {}
 
   async getRandom(userIdValue?: string) {
+    const userId = this.parsePositiveInt(userIdValue, 'userId');
+    const asset = await this.ensureAsset(userId);
+    const stats = await this.getTodayStats(userId);
     const question = QUESTIONS[Math.floor(Math.random() * QUESTIONS.length)];
 
     return {
       question: this.publicQuestion(question),
       dailyLimit: DAILY_SEED_LIMIT,
-      todayAwarded: this.demoTodayAwarded,
-      remaining: Math.max(0, DAILY_SEED_LIMIT - this.demoTodayAwarded),
-      seed: this.demoSeed,
+      todayAwarded: stats.todayAwarded,
+      remaining: Math.max(0, DAILY_SEED_LIMIT - stats.todayAwarded),
+      seed: asset.seed,
     };
   }
 
   async answer(body: unknown) {
     const payload = this.parseBody(body);
 
+    const userId = this.parsePositiveInt(payload.userId, 'userId');
     const questionId = this.parsePositiveInt(payload.questionId, 'questionId');
     const submittedAnswer = this.parseAnswer(payload.answer);
 
@@ -98,28 +105,49 @@ export class QuizService {
 
     const correct = question.answer === submittedAnswer;
 
-    let seedAwarded = 0;
+    return this.prisma.$transaction(async (tx) => {
+      const asset = await this.ensureAsset(userId, tx);
+      const stats = await this.getTodayStats(userId, tx);
+      const canAward = correct && stats.todayAwarded < DAILY_SEED_LIMIT;
+      const seedAwarded = canAward ? 1 : 0;
 
-    if (correct && this.demoTodayAwarded < DAILY_SEED_LIMIT) {
-      seedAwarded = 1;
-      this.demoSeed += 1;
-      this.demoTodayAwarded += 1;
-    }
+      const updatedAsset = seedAwarded
+        ? await tx.asset.update({
+            where: { userId },
+            data: { seed: { increment: seedAwarded } },
+          })
+        : asset;
 
-    return {
-      correct,
-      answer: question.answer,
-      explanation: question.explanation,
-      seedAwarded,
-      dailyLimit: DAILY_SEED_LIMIT,
-      todayAwarded: this.demoTodayAwarded,
-      remaining: Math.max(0, DAILY_SEED_LIMIT - this.demoTodayAwarded),
-      seed: this.demoSeed,
-    };
+      await tx.quizAttempt.create({
+        data: {
+          userId,
+          questionId,
+          answeredCorrect: correct,
+          seedAwarded,
+        },
+      });
+
+      const todayAwarded = stats.todayAwarded + seedAwarded;
+
+      return {
+        correct,
+        answer: question.answer,
+        explanation: question.explanation,
+        seedAwarded,
+        dailyLimit: DAILY_SEED_LIMIT,
+        todayAwarded,
+        remaining: Math.max(0, DAILY_SEED_LIMIT - todayAwarded),
+        seed: updatedAsset.seed,
+      };
+    });
   }
 
   async exchange(body: unknown) {
-    const bundleCount = Math.floor(this.demoSeed / SEED_EXCHANGE_UNIT);
+    const payload = this.parseBody(body);
+    const userId = this.parsePositiveInt(payload.userId, 'userId');
+
+    const asset = await this.ensureAsset(userId);
+    const bundleCount = Math.floor(asset.seed / SEED_EXCHANGE_UNIT);
 
     if (bundleCount < 1) {
       throw new BadRequestException('해바라기씨가 10개 이상 필요합니다.');
@@ -128,16 +156,62 @@ export class QuizService {
     const seedUsed = bundleCount * SEED_EXCHANGE_UNIT;
     const cashAdded = bundleCount * SEED_EXCHANGE_CASH;
 
-    this.demoSeed -= seedUsed;
-    this.demoCashBalance += cashAdded;
-    this.demoTotalValue += cashAdded;
+    const updatedAsset = await this.prisma.asset.update({
+      where: { userId },
+      data: {
+        seed: { decrement: seedUsed },
+        balance: { increment: cashAdded },
+        totalValue: { increment: cashAdded },
+      },
+    });
 
     return {
       seedUsed,
       cashAdded,
-      seed: this.demoSeed,
-      cashBalance: this.demoCashBalance,
-      totalValue: this.demoTotalValue,
+      seed: updatedAsset.seed,
+      cashBalance: updatedAsset.balance,
+      totalValue: updatedAsset.totalValue,
+    };
+  }
+
+  private async ensureAsset(userId: number, tx: Prisma.TransactionClient = this.prisma) {
+    const user = await tx.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException('user not found');
+    }
+
+    const existing = await tx.asset.findUnique({ where: { userId } });
+    if (existing) {
+      return existing;
+    }
+
+    return tx.asset.create({
+      data: {
+        userId,
+        balance: INITIAL_BALANCE,
+        totalValue: INITIAL_BALANCE,
+        seed: 0,
+      },
+    });
+  }
+
+  private async getTodayStats(
+    userId: number,
+    tx: Prisma.TransactionClient = this.prisma,
+  ) {
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+
+    const attempts = await tx.quizAttempt.findMany({
+      where: {
+        userId,
+        createdAt: { gte: start },
+      },
+      select: { seedAwarded: true },
+    });
+
+    return {
+      todayAwarded: attempts.reduce((sum, item) => sum + item.seedAwarded, 0),
     };
   }
 

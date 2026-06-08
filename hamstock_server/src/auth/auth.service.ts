@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -23,6 +24,16 @@ export class AuthService {
     const email = this.normalizeEmail(payload.email);
     const password = this.validatePassword(payload.password);
     const nickname = this.validateNickname(payload.nickname);
+
+    const existingNickname = await this.prisma.user.findFirst({
+      where: {
+        nickname,
+        NOT: { email },
+      },
+    });
+    if (existingNickname) {
+      throw new ConflictException('already registered nickname');
+    }
 
     const existing = await this.prisma.user.findUnique({ where: { email } });
     if (existing) {

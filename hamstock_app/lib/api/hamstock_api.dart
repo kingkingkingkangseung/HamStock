@@ -71,6 +71,36 @@ class HamstockApi {
     return (data is Map<String, dynamic>) ? data : <String, dynamic>{};
   }
 
+  Future<Map<String, dynamic>> getRanking({
+    required int userId,
+    int limit = 10,
+  }) async {
+    final uri = Uri.parse('$baseUrl/me/ranking').replace(
+      queryParameters: {
+        'userId': '$userId',
+        'limit': '$limit',
+      },
+    );
+    final data = await _request(uri, 'GET');
+    return (data is Map<String, dynamic>) ? data : <String, dynamic>{};
+  }
+
+  Future<Map<String, dynamic>> updateNickname({
+    required int userId,
+    required String nickname,
+  }) async {
+    final uri = Uri.parse('$baseUrl/me/nickname');
+    final data = await _request(
+      uri,
+      'PATCH',
+      body: {
+        'userId': userId,
+        'nickname': nickname,
+      },
+    );
+    return (data is Map<String, dynamic>) ? data : <String, dynamic>{};
+  }
+
   Future<Map<String, dynamic>> buy({
     required int userId,
     required int stockId,

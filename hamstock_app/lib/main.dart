@@ -234,14 +234,20 @@ class HomeSkeletonPage extends StatefulWidget {
 }
 
 class _HomeSkeletonPageState extends State<HomeSkeletonPage> {
+  late Map<String, dynamic> _user;
   Map<String, dynamic>? _dashboard;
   bool _loadingDashboard = false;
 
-  int get _userId => ((widget.user['id'] as num?) ?? 1).toInt();
+  int get _userId => ((_user['id'] as num?) ?? 1).toInt();
+  String get _nickname {
+    final value = _user['nickname']?.toString().trim();
+    return value == null || value.isEmpty ? 'HAMSTOCK' : value;
+  }
 
   @override
   void initState() {
     super.initState();
+    _user = Map<String, dynamic>.from(widget.user);
     _loadDashboard();
   }
 
@@ -291,6 +297,64 @@ class _HomeSkeletonPageState extends State<HomeSkeletonPage> {
       MaterialPageRoute(builder: (_) => const AuthPage()),
       (_) => false,
     );
+  }
+
+  Future<void> _showNicknameDialog() async {
+    final controller = TextEditingController(text: _nickname);
+    final nickname = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text(
+            '닉네임 변경',
+            style: TextStyle(fontWeight: FontWeight.w900),
+          ),
+          content: TextField(
+            controller: controller,
+            maxLength: 12,
+            decoration: const InputDecoration(
+              labelText: '닉네임',
+              hintText: '2~12자, 중복 불가',
+            ),
+            autofocus: true,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('취소'),
+            ),
+            FilledButton(
+              onPressed: () =>
+                  Navigator.of(context).pop(controller.text.trim()),
+              child: const Text('저장'),
+            ),
+          ],
+        );
+      },
+    );
+    controller.dispose();
+
+    if (nickname == null || nickname == _nickname) return;
+    if (nickname.length < 2) {
+      _showToast(context, '닉네임은 2자 이상이어야 합니다.');
+      return;
+    }
+
+    try {
+      final result = await widget.api.updateNickname(
+        userId: _userId,
+        nickname: nickname,
+      );
+      final updated = result['user'];
+      if (updated is Map && mounted) {
+        setState(() {
+          _user = Map<String, dynamic>.from(updated);
+        });
+      }
+      _showToast(context, '닉네임이 변경되었습니다.');
+    } catch (e) {
+      _showToast(context, e.toString().replaceFirst('Exception: ', ''));
+    }
   }
 
   Future<void> _exchangeSeeds() async {
@@ -358,16 +422,20 @@ class _HomeSkeletonPageState extends State<HomeSkeletonPage> {
                       child: Column(
                         children: [
                           Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              Text(
-                                '[$stageTitle] HAMSTOCK',
+                              Expanded(
+                                child: Text(
+                                '[$stageTitle] $_nickname',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
                                   fontSize: 17,
                                   fontWeight: FontWeight.w900,
                                   color: Color(0xFF2E1E12),
                                 ),
+                                ),
                               ),
+                              const SizedBox(width: 6),
                               Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
@@ -381,10 +449,38 @@ class _HomeSkeletonPageState extends State<HomeSkeletonPage> {
                                   ),
                                   const SizedBox(width: 6),
                                   GestureDetector(
+                                    onTap: _showNicknameDialog,
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 6,
+                                        vertical: 4,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFB98D23)
+                                            .withOpacity(0.14),
+                                        borderRadius:
+                                            BorderRadius.circular(999),
+                                        border: Border.all(
+                                          color: const Color(0xFFB98D23),
+                                          width: 1,
+                                        ),
+                                      ),
+                                      child: const Text(
+                                        '닉네임',
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w900,
+                                          color: Color(0xFF6F4E16),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  GestureDetector(
                                     onTap: _exchangeSeeds,
                                     child: Container(
                                       padding: const EdgeInsets.symmetric(
-                                        horizontal: 8,
+                                        horizontal: 6,
                                         vertical: 4,
                                       ),
                                       decoration: BoxDecoration(
@@ -412,7 +508,7 @@ class _HomeSkeletonPageState extends State<HomeSkeletonPage> {
                                     onTap: _logout,
                                     child: Container(
                                       padding: const EdgeInsets.symmetric(
-                                        horizontal: 8,
+                                        horizontal: 6,
                                         vertical: 4,
                                       ),
                                       decoration: BoxDecoration(
@@ -631,7 +727,16 @@ class _HomeSkeletonPageState extends State<HomeSkeletonPage> {
                           child: _BottomWideImageButton(
                             imagePath: 'assets/images/btn_rank.png',
                             height: bottomBtnH,
-                            onTap: () => _showToast(context, '랭킹/비교 탭 예정'),
+                            onTap: () {
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => RankingPage(
+                                    api: widget.api,
+                                    userId: _userId,
+                                  ),
+                                ),
+                              );
+                            },
                           ),
                         ),
                         const SizedBox(width: 10),
@@ -650,6 +755,664 @@ class _HomeSkeletonPageState extends State<HomeSkeletonPage> {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class RankingPage extends StatefulWidget {
+  const RankingPage({
+    super.key,
+    required this.api,
+    required this.userId,
+  });
+
+  final HamstockApi api;
+  final int userId;
+
+  @override
+  State<RankingPage> createState() => _RankingPageState();
+}
+
+class _RankingPageState extends State<RankingPage> {
+  Map<String, dynamic>? _ranking;
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRanking();
+  }
+
+  Future<void> _loadRanking() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    try {
+      final ranking = await widget.api.getRanking(userId: widget.userId);
+      if (mounted) setState(() => _ranking = ranking);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _error = e.toString().replaceFirst('Exception: ', ''));
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ranking = (_ranking?['ranking'] as List?) ?? const <dynamic>[];
+    final top3 = (_ranking?['top3'] as List?) ?? const <dynamic>[];
+    final myRanking = _ranking?['myRanking'];
+
+    return Scaffold(
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Color(0xFF2F2118), Color(0xFF120D09)],
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+          ),
+        ),
+        child: SafeArea(
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                child: Row(
+                  children: [
+                    _RankIconButton(
+                      icon: Icons.arrow_back_rounded,
+                      onTap: () => Navigator.of(context).pop(),
+                    ),
+                    const Expanded(
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            '랭킹',
+                            style: TextStyle(
+                              color: Color(0xFFEFD5A0),
+                              fontSize: 34,
+                              fontWeight: FontWeight.w900,
+                              shadows: [
+                                Shadow(
+                                  color: Colors.black54,
+                                  blurRadius: 8,
+                                  offset: Offset(0, 2),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    _RankSortPill(onTap: _loadRanking),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: RefreshIndicator(
+                  onRefresh: _loadRanking,
+                  child: ListView(
+                    padding: const EdgeInsets.fromLTRB(18, 8, 18, 18),
+                    children: [
+                      Center(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 22,
+                            vertical: 10,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF221710),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: const Color(0xFF8B5F28),
+                              width: 1.4,
+                            ),
+                            boxShadow: const [
+                              BoxShadow(
+                                color: Colors.black45,
+                                blurRadius: 16,
+                                offset: Offset(0, 8),
+                              ),
+                            ],
+                          ),
+                          child: const Text(
+                            '🏆 투자자 랭킹',
+                            style: TextStyle(
+                              color: Color(0xFFF5D08A),
+                              fontSize: 18,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 22),
+                      if (_loading)
+                        const Padding(
+                          padding: EdgeInsets.only(top: 80),
+                          child: Center(
+                            child: CircularProgressIndicator(
+                              color: Color(0xFFEFC463),
+                            ),
+                          ),
+                        )
+                      else if (_error != null)
+                        _RankingErrorCard(error: _error!, onRetry: _loadRanking)
+                      else ...[
+                        _RankingPodium(top3: top3),
+                        const SizedBox(height: 22),
+                        _RankingTable(entries: ranking),
+                        const SizedBox(height: 14),
+                        _MyRankingStrip(entry: myRanking),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RankIconButton extends StatelessWidget {
+  const _RankIconButton({
+    required this.icon,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        width: 48,
+        height: 48,
+        decoration: BoxDecoration(
+          color: const Color(0xFF2A1B12),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFF7B5525), width: 1.4),
+          boxShadow: const [
+            BoxShadow(
+              color: Colors.black45,
+              blurRadius: 10,
+              offset: Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Icon(icon, color: const Color(0xFFF5D9A5), size: 28),
+      ),
+    );
+  }
+}
+
+class _RankSortPill extends StatelessWidget {
+  const _RankSortPill({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        height: 48,
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        decoration: BoxDecoration(
+          color: const Color(0xFF241810),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFF6F4B21), width: 1.3),
+        ),
+        child: const Row(
+          children: [
+            Text(
+              r'$',
+              style: TextStyle(
+                color: Color(0xFFF1B95D),
+                fontSize: 24,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            SizedBox(width: 6),
+            Text(
+              '수익률',
+              style: TextStyle(
+                color: Color(0xFFEFD5A0),
+                fontSize: 15,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RankingPodium extends StatelessWidget {
+  const _RankingPodium({required this.top3});
+
+  final List<dynamic> top3;
+
+  Map<String, dynamic>? _entryAt(int rank) {
+    for (final item in top3) {
+      if (item is Map && item['rank'] == rank) {
+        return Map<String, dynamic>.from(item);
+      }
+    }
+    return null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final first = _entryAt(1);
+    final second = _entryAt(2);
+    final third = _entryAt(3);
+
+    return SizedBox(
+      height: 290,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Expanded(
+            child: _PodiumMember(
+              entry: second,
+              rank: 2,
+              medalColor: const Color(0xFFC4C9D1),
+              height: 138,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _PodiumMember(
+              entry: first,
+              rank: 1,
+              medalColor: const Color(0xFFE3A72E),
+              height: 182,
+              featured: true,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _PodiumMember(
+              entry: third,
+              rank: 3,
+              medalColor: const Color(0xFFB96F31),
+              height: 124,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PodiumMember extends StatelessWidget {
+  const _PodiumMember({
+    required this.entry,
+    required this.rank,
+    required this.medalColor,
+    required this.height,
+    this.featured = false,
+  });
+
+  final Map<String, dynamic>? entry;
+  final int rank;
+  final Color medalColor;
+  final double height;
+  final bool featured;
+
+  @override
+  Widget build(BuildContext context) {
+    final nickname = entry?['nickname']?.toString() ?? '대기중';
+    final returnRate = (entry?['returnRate'] as num?) ?? 0;
+    final isMe = entry?['isMe'] == true;
+
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.end,
+      children: [
+        Container(
+          width: featured ? 82 : 66,
+          height: featured ? 82 : 66,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: LinearGradient(
+              colors: [
+                medalColor.withOpacity(0.95),
+                const Color(0xFF3A2716),
+              ],
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+            ),
+            border: Border.all(color: const Color(0xFFFFE4A0), width: 2),
+            boxShadow: const [
+              BoxShadow(
+                color: Colors.black54,
+                blurRadius: 14,
+                offset: Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Center(
+            child: Text(
+              rank == 1 ? '🐹' : '🐭',
+              style: TextStyle(fontSize: featured ? 38 : 30),
+            ),
+          ),
+        ),
+        const SizedBox(height: 6),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: medalColor,
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: const Color(0xFFFFE4A0), width: 1.2),
+          ),
+          child: Text(
+            '$rank',
+            style: const TextStyle(
+              color: Color(0xFF2D1A0B),
+              fontWeight: FontWeight.w900,
+              fontSize: 18,
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          height: height,
+          width: double.infinity,
+          padding: const EdgeInsets.fromLTRB(8, 12, 8, 10),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [medalColor.withOpacity(0.95), const Color(0xFF553315)],
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+            ),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
+            border: Border.all(color: const Color(0xFFC7923B), width: 1.4),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              Text(
+                isMe ? '$nickname  ·  나' : nickname,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Color(0xFFFFF1D0),
+                  fontWeight: FontWeight.w900,
+                  fontSize: 16,
+                ),
+              ),
+              const SizedBox(height: 5),
+              Text(
+                _formatSignedPercent(returnRate),
+                style: const TextStyle(
+                  color: Color(0xFFFFD27A),
+                  fontWeight: FontWeight.w900,
+                  fontSize: 16,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _RankingTable extends StatelessWidget {
+  const _RankingTable({required this.entries});
+
+  final List<dynamic> entries;
+
+  @override
+  Widget build(BuildContext context) {
+    final rest = entries
+        .whereType<Map>()
+        .map((entry) => Map<String, dynamic>.from(entry))
+        .where((entry) => ((entry['rank'] as num?) ?? 0) >= 4)
+        .toList();
+
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFFF1DEC1),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: const Color(0xFF6B4324), width: 2),
+        boxShadow: const [
+          BoxShadow(
+            color: Colors.black45,
+            blurRadius: 14,
+            offset: Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 14, 18, 8),
+            child: Row(
+              children: const [
+                SizedBox(
+                  width: 54,
+                  child: Text(
+                    '순위',
+                    style: TextStyle(
+                      color: Color(0xFF8D7560),
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: Text(
+                    '닉네임',
+                    style: TextStyle(
+                      color: Color(0xFF8D7560),
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                Text(
+                  '수익률',
+                  style: TextStyle(
+                    color: Color(0xFF8D7560),
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1, color: Color(0xFFD6B98F)),
+          if (rest.isEmpty)
+            const Padding(
+              padding: EdgeInsets.all(22),
+              child: Text(
+                '아직 4위 이하 랭킹 데이터가 없습니다.',
+                style: TextStyle(
+                  color: Color(0xFF6A543B),
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            )
+          else
+            for (final entry in rest) _RankingRow(entry: entry),
+        ],
+      ),
+    );
+  }
+}
+
+class _RankingRow extends StatelessWidget {
+  const _RankingRow({required this.entry});
+
+  final Map<String, dynamic> entry;
+
+  @override
+  Widget build(BuildContext context) {
+    final rank = ((entry['rank'] as num?) ?? 0).toInt();
+    final nickname = entry['nickname']?.toString() ?? '-';
+    final returnRate = (entry['returnRate'] as num?) ?? 0;
+    final isMe = entry['isMe'] == true;
+
+    return Container(
+      color: isMe ? const Color(0xFFFFF2CD) : Colors.transparent,
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 15),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 54,
+            child: Text(
+              '$rank위',
+              style: const TextStyle(
+                color: Color(0xFF2E1E12),
+                fontSize: 18,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              isMe ? '$nickname  (나)' : nickname,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Color(0xFF2E1E12),
+                fontSize: 18,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+          Text(
+            _formatSignedPercent(returnRate),
+            style: TextStyle(
+              color: returnRate >= 0
+                  ? const Color(0xFF8A5A18)
+                  : const Color(0xFFC43B35),
+              fontSize: 18,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MyRankingStrip extends StatelessWidget {
+  const _MyRankingStrip({required this.entry});
+
+  final dynamic entry;
+
+  @override
+  Widget build(BuildContext context) {
+    if (entry is! Map) {
+      return const SizedBox.shrink();
+    }
+
+    final data = Map<String, dynamic>.from(entry as Map);
+    final rank = ((data['rank'] as num?) ?? 0).toInt();
+    final nickname = data['nickname']?.toString() ?? '-';
+    final returnRate = (data['returnRate'] as num?) ?? 0;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF26190F),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFF6D4722), width: 1.6),
+      ),
+      child: Row(
+        children: [
+          const Text(
+            '내 랭킹',
+            style: TextStyle(
+              color: Color(0xFFE0B36C),
+              fontSize: 16,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(width: 18),
+          Text(
+            '$rank위',
+            style: const TextStyle(
+              color: Color(0xFFEFD5A0),
+              fontSize: 26,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(width: 18),
+          Expanded(
+            child: Text(
+              nickname,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Color(0xFFEFD5A0),
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          Text(
+            _formatSignedPercent(returnRate),
+            style: const TextStyle(
+              color: Color(0xFFF1B95D),
+              fontSize: 18,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RankingErrorCard extends StatelessWidget {
+  const _RankingErrorCard({
+    required this.error,
+    required this.onRetry,
+  });
+
+  final String error;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF1DEC1),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Column(
+        children: [
+          Text(
+            error,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Color(0xFFC43B35),
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 12),
+          FilledButton(
+            onPressed: onRetry,
+            child: const Text('다시 불러오기'),
+          ),
+        ],
       ),
     );
   }

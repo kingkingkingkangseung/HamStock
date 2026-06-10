@@ -497,12 +497,12 @@ export class StockService implements OnModuleInit, OnModuleDestroy {
 
     this.isUpdating = true;
 
-    const watchList = await this.prisma.watchUniverse.findMany({
-      where: { enabled: true },
-      orderBy: [{ priority: 'asc' }, { id: 'asc' }],
-    });
-
     try {
+      const watchList = await this.prisma.watchUniverse.findMany({
+        where: { enabled: true },
+        orderBy: [{ priority: 'asc' }, { id: 'asc' }],
+      });
+
       for (const item of watchList) {
         try {
           let stock = await this.prisma.stock.findFirst({
@@ -561,13 +561,21 @@ export class StockService implements OnModuleInit, OnModuleDestroy {
           }
         }
       }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`Stock update skipped: ${message}`);
     } finally {
       this.isUpdating = false;
     }
   }
 
   async onModuleInit() {
-    await this.updateStocks();
+    try {
+      await this.updateStocks();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`Initial stock update skipped: ${message}`);
+    }
 
     this.intervalId = setInterval(() => {
       void this.updateStocks();
